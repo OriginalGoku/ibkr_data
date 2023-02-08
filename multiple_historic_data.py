@@ -3,13 +3,23 @@ from ibapi.client import EClient
 from ibapi.wrapper import EWrapper
 from ibapi.contract import Contract
 # from ibapi.ticktype import TickTypeEnum
-from datetime import datetime, timedelta
+from datetime import datetime  # , timedelta, time
+import time
+
+# Code from ChatGPT ver 2
+import ibapi
+import time
+from ibapi.client import EClient
+from ibapi.wrapper import EWrapper
+import pandas as pd
 
 
+# working code from ChatGPT ver 1
 class IBClient(EWrapper, EClient):
-    def __init__(self):
+    def __init__(self, duration: str):
         EClient.__init__(self, self)
         self.data = {}
+        self.duration = duration
 
     def historicalData(self, reqId, bar):
         print("HistoricalData. ReqId:", reqId, "BarData.", bar)
@@ -20,27 +30,52 @@ class IBClient(EWrapper, EClient):
                                   bar.barCount])
         print(bar.date, bar.open, bar.high, bar.low, bar.close, bar.volume, bar.wap, bar.barCount)
 
+    # Original Working Code
+    # def historicalDataEnd(self, reqId, start, end):
+    #     symbol = self.data[reqId]["symbol"]
+    #     filename = f"{symbol}.csv"
+    #     with open(filename, "w", newline="") as f:
+    #         writer = csv.writer(f)
+    #         writer.writerow(["date", "open", "high", "low", "close", "volume", "wap", "trade_count"])
+    #         for item in self.data[symbol]:
+    #             writer.writerow(item)
+    #     print(f"Historical data for {symbol} has been saved to {filename}.")
     def historicalDataEnd(self, reqId, start, end):
         symbol = self.data[reqId]["symbol"]
-        filename = f"{symbol}.csv"
-        with open(filename, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["Date", "Open", "High", "Low", "Close", "Volume"])
-            for item in self.data[symbol]:
-                writer.writerow(item)
-        print(f"Historical data for {symbol} has been saved to {filename}.")
+        df = pd.DataFrame(self.data[symbol], columns=["date", "open", "high", "low", "close", "volume", "wap",
+                                                      "trade_count"])
+        # Convert the "Date" column into pandas datetime objects
+        df["date"] = pd.to_datetime(df["date"], format="%Y%m%d")
+
+        # Set the "Date" column as the index of the dataframe
+        df.set_index("date", inplace=True)
+
+        # Save the dataframe to a csv file without the default index, but with the "date" column as the index
+        print(f"Saving {symbol} to {symbol}_{self.duration}_daily_data.csv")
+        df.to_csv(f"{symbol}_{self.duration}_daily_data.csv", index=True, index_label="date")
+        print(f"Historical data for {symbol} has been saved to {symbol}_{self.duration}_daily_data.csv.")
+
+        # symbol = self.data[reqId]["symbol"]
+        # filename = f"{symbol}.csv"
+        # with open(filename, "w", newline="") as f:
+        #     writer = csv.writer(f)
+        #     writer.writerow(["date", "open", "high", "low", "close", "volume", "wap", "trade_count"])
+        #     for item in self.data[symbol]:
+        #         writer.writerow(item)
+        # print(f"Historical data for {symbol} has been saved to {filename}.")
 
 
 def retrieve_historical_data(symbols):
     print("Start retrieving historical data...")
-    client = IBClient()
+    duration = "30 Y"
+    client = IBClient(duration)
     client.connect("127.0.0.1", 7497, clientId=0)
     print(client.isConnected())
 
     end = datetime.now()
-    start = end - timedelta(days=365 * 30)
+    # start = end - timedelta(days=365 * 30)
 
-    reqId = 0
+    reqId = 2
     for symbol in symbols:
         contract = Contract()
         contract.symbol = symbol
@@ -49,20 +84,128 @@ def retrieve_historical_data(symbols):
         contract.currency = "USD"
         client.data[reqId] = {"symbol": symbol}
         print(contract.symbol)
-        client.reqHistoricalData(reqId, contract, end.strftime("%Y%m%d %H:%M:%S"), "30 Y", "1 day", "TRADES", 0, 1,
+        client.reqHistoricalData(reqId, contract, end.strftime("%Y%m%d %H:%M:%S"), duration, "1 day", "TRADES", 0, 1,
                                  False, [])
+        print("Requeting historical data for " + symbol + " Finished")
 
         reqId += 1
+        # sleep for 1 second to avoid exceeding the API rate limit‘s 1 req/sec
+        time.sleep(3)
+        # stop running for 1 second to avoid exceeding the API rate limit‘s 1 req/sec
 
+    print("Historical data retrieval is complete.")
     client.run()
+    print("Client is running")
+    # client.disconnect()
 
 
 if __name__ == "__main__":
     print('Start Main Program')
-    symbols = ["AAPL", "IBM", "GOOG"]
+    # symbols = ["AAPL", "IBM", "GOOG"]
+    # symbols = ["XLK", "XLV", "XLY"] #, "XLP", "XLE", "XLF", "XLB", "XLU"]
+    # symbols = ["XLE", "XLB", "XLF", 'AGG', 'DIA', 'DOG', 'EEM', 'EFA', 'EWA', 'EWJ', 'FXI', 'GLD', 'IJH', 'IWM', 'PSQ',
+    #            'QQQ', 'RWM', 'SH', 'SLV', 'SPY', 'TLT', 'UNG', 'USO', 'VTI', 'XBI', 'XHB', 'XLR']
+
+    symbols = ['XLRE','XLC']
     retrieve_historical_data(symbols)
 
+# Not Working Code:
+# class IbkrHistoricData(EWrapper, EClient):
+#     def __init__(self, symbols, duration_str, bar_size_setting, what_to_show, use_rth, format_date, end_time,
+#                  frequency):
+#         EClient.__init__(self, self)
+#         self.symbols = None
+#         self.duration_str = duration_str
+#         self.bar_size_setting = bar_size_setting
+#         self.what_to_show = what_to_show
+#         self.use_rth = use_rth
+#         self.format_date = format_date
+#         self.end_time = end_time
+#         self.frequency = frequency
+#         self.symbols = symbols
+#         self.data = {}
+#         self.start_time = {}
+#
+#     def historicalData(self, reqId, bar):
+#         symbol = self.symbols[reqId]
+#         if symbol not in self.data:
+#             self.data[symbol] = []
+#         self.data[symbol].append([bar.date, bar.open, bar.high, bar.low, bar.close, bar.volume])
+#
+#     def get_historical_data(self):
+#         # self.connect("127.0.0.1", 7497, 0)
+#         reqId = 0
+#         for symbol in self.symbols:
+#             self.start_time[symbol] = time.time()
+#             # self.reqHistoricalData(symbol, duration_str=self.duration_str, barSizeSetting=self.bar_size_setting,
+#             #                        whatToShow=self.what_to_show, useRTH=self.use_rth, formatDate=self.format_date)
+#             contract = Contract()
+#             contract.symbol = symbol
+#             contract.secType = "STK"
+#             contract.exchange = "SMART"
+#             contract.currency = "USD"
+#             self.data[reqId] = {"symbol": symbol}
+#             print("Requesting historical data for ", symbol)
+#             self.reqHistoricalData(reqId, contract, self.end_time, self.duration_str, self.frequency,
+#                                      self.what_to_show, self.use_rth, self.format_date, False, [])
+#             time.sleep(2)
+#             reqId += 1
+#
+#         self.run()
+#
+#     def error(self, reqId, errorCode, errorString):
+#         print("Error: ", reqId, " ", errorCode, " ", errorString)
+#
+#
+# if __name__ == "__main__":
+#     # symbols = ["XLI", "XLK", "XLV", "XLY", "XLP", "XLE", "XLF", "XLB", "XLU"]
+#     symbols = ["XLP", "XLE", "XLF"]
+#     param = {
+#         'duration_str': "30 Y",
+#         'bar_size_setting': "1 day",
+#         'what_to_show': 'TRADES',
+#         'use_rth': True,
+#         'format_date': 1,
+#         'end_time': datetime.now().strftime("%Y%m%d %H:%M:%S"),
+#         'frequency': '1 day'}
+#
+#     client = IbkrHistoricData(symbols, **param)
+#     client.connect("127.0.0.1", 7497, 0)
+#
+#
+#     print(client.isConnected())
+#     if client.isConnected():
+#         client.get_historical_data()
+#
+#         for symbol in symbols:
+#             df = pd.DataFrame(client.data[symbol], columns=["date", "open", "high", "low", "close", "volume", "wap",
+#                                                             "trade_count"])
+#             # Convert the "Date" column into pandas datetime objects
+#             df["date"] = pd.to_datetime(df["Date"], format="%Y%m%d")
+#
+#             # Set the "Date" column as the index of the dataframe
+#             df.set_index("date", inplace=True)
+#
+#             # Save the dataframe to a csv file without the default index, but with the "date" column as the index
+#             df.to_csv(f"{symbol}_30_years_daily_data.csv", index=True, index_label="date")
+#
+#         # API Activity Log
+#         with open("API_activity_log.txt", "w") as f:
+#             for reqId, data in client.data.items():
+#                 f.write(f"{reqId}: {len(data)} bars retrieved\n")
+#
+#         # API Latency Metrics
+#         with open("API_latency_metrics.txt", "w") as f:
+#             for symbol, data in client.data.items():
+#                 elapsed_time = time.time() - client.start_time[symbol]
+#                 f.write(f"{symbol}: Elapsed time = {elapsed_time:.2f} seconds\n")
+#
+#     else:
+#         print("Not connected to TWS")
 
+
+# =================================================
+# Not good code from stack overflow
 # from ibapi.client import EClient
 # from ibapi.wrapper import EWrapper
 # from ibapi.contract import Contract
