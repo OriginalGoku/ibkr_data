@@ -121,6 +121,12 @@ class AllIBKRSymbols:
             td_counter += 1
 
     def find_regions(self, soup):
+        #view-source:https://www.interactivebrokers.com/en/index.php?f=1563&p=stk
+        # find the first ul element with the given class
+        ul_element = soup.find("ul", class_="your-class-name")
+
+        # find all ul elements with the given class
+        ul_elements = soup.find_all("ul", class_="your-class-name")
     def get_all_products(self):
         for region_name, region_link in REGIONS.items():
         for product_name in ALL_USD_PRODUCTS_NAME:
