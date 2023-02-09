@@ -6,24 +6,38 @@ import logging
 import pandas as pd
 import os
 import re
+from tqdm import tqdm
 
-ALL_USD_PRODUCTS_NAME = {'Stocks': 'stk',
-                         'Options': 'opt',
-                         'Futures': 'fut',
-                         'FOPs': 'fop',
-                         'ETFs': 'etf',
-                         'Warrants': 'war',
-                         'Structured Products': 'iopt',
-                         'SSFs': 'ssf',
-                         'Currencies': 'fx',
-                         'Metals': 'cmdty',
-                         'Indices': 'ind',
-                         'Fixed Income': 'bond',
-                         'Mutual Funds': 'mf'}
-REGIONS = {"North America": "",
-           "Europe": "europe_",
-           "Asia-Pacific": "asia_", }
+# Currencies and Metal are not included because they have a different format
+ALL_PRODUCTS_NAMES = {'Stocks': 'stk',
+                      'Options': 'opt',
+                      'Futures': 'fut',
+                      'FOPs': 'fop',
+                      'ETFs': 'etf',
+                      'Warrants': 'war',
+                      'Structured Products': 'iopt',
+                      'SSFs': 'ssf',
+                      # 'Currencies': 'fx',
+                      # 'Metals': 'cmdty',
+                      'Indices': 'ind',
+                      'Fixed Income': 'bond',
+                      'Mutual Funds': 'mf'}
+ALL_PRODUCTS_REGIONS = {'Stocks': [],
+                        'Options': [],
+                        'Futures': [],
+                        'FOPs': [],
+                        'ETFs': [],
+                        'Warrants': [],
+                        'Structured Products': [],
+                        'SSFs': [],
+                        'Currencies': [],
+                        'Metals': [],
+                        'Indices': [],
+                        'Fixed Income': [],
+                        'Mutual Funds': []}
+
 IBKR_BASE_URL = 'https://www.interactivebrokers.com/en/'
+IBKR_URL = 'https://www.interactivebrokers.com'
 
 hdr = {
     "authority": "interactivebrokers.com",
@@ -44,27 +58,60 @@ hdr = {
 
 
 class AllIBKRSymbols:
-    def __init__(self, verbose=False):
+    def __init__(self, verbose=False, save_data_root_folder="Product Lists"):
+        self.all_products = {'product_name': [], 'product_region': [], 'link': []}
         self.all_symbol_info = {'ibkr_symbol': [], 'product_description': [], 'product_link': [], 'conid': [],
                                 'symbol': [],
                                 'currency': []}
-        self.generate_required_folders()
-        self.all_exchange_info = {'country': [], 'market_center_details': [], 'market_center_details_link': [],
-                                  'products': [], 'hours': []}
+        self.save_data_root_folder = save_data_root_folder
+        self._create_root_folder()
+        # The system should automatically generate the required folders
+        self.get_product_region()
+        self.save_product_region()
         self.verbose = verbose
 
-    @staticmethod
-    def generate_required_folders():
-        for folder in ALL_USD_PRODUCTS_NAME.keys():
-            product_folder = 'Product List/' + folder
-            if not os.path.exists(product_folder):
-                os.makedirs(product_folder)
-                for region in REGIONS.keys():
-                    if not os.path.exists(product_folder + '/' + region):
-                        os.makedirs(product_folder + '/' + region)
+    def _create_root_folder(self):
+        if not os.path.exists(self.save_data_root_folder):
+            os.makedirs(self.save_data_root_folder)
+
+    def generate_folder(self, product_name, region):
+        if not os.path.exists(self.save_data_root_folder + '/' + product_name + '/' + region):
+            os.makedirs(self.save_data_root_folder + '/' + product_name + '/' + region)
+
+    def find_regions(self, product_name, soup):
+        # find the first ul element with the given class
+        ul_element = soup.find("ul", class_="subtabsmenu")
+
+        try:
+            all_li = ul_element.find_all('li')
+            for li in all_li:
+                print('Region', li.text.strip())
+                print('Region Link', (IBKR_URL + li.a['href']).strip())
+                self.all_products['product_name'].append(product_name)
+                self.all_products['product_region'].append(li.text.strip())
+                self.all_products['link'].append((IBKR_URL + li.a['href']).strip())
+                self.generate_folder(product_name, li.text.strip())
+        except:
+            print("No Region Found")
+
+    def get_product_region(self):
+
+        product_url = 'https://www.interactivebrokers.com/en/index.php?f=1563&p='
+        for product, product_link in ALL_PRODUCTS_NAMES.items():
+            link_to_load = product_url + product_link
+            page_soup = self.get_text_from_url(link_to_load)
+            print("---------", product, "---------")
+            print('Loading ', link_to_load)
+
+            self.find_regions(product, page_soup)
+
+    def save_product_region(self):
+        pd.DataFrame(self.all_products).to_csv(self.save_data_root_folder + '/all_ibkr_products_region.csv',
+                                               index=False)
 
     @staticmethod
     def get_text_from_url(the_url):
+        # print("Loading URL: ", the_url)
         confirmed = False
         global hdr
         hdr["path"] = the_url
@@ -95,7 +142,81 @@ class AllIBKRSymbols:
         # return r.text
         return BeautifulSoup(r.text, 'html.parser')
 
-    def get_symbols_from_soup(self, soup):
+    def get_product_exchange_list(self, soup):
+        exchange_info = {'country': [], 'market_center_details': [], 'market_center_details_link': [],
+                         'products': [], 'hours': []}
+
+        rows = soup.select('tbody tr')
+        current_country = None
+        # Extract Country information and the first row data
+        for row in rows:
+            cols = row.select('td')
+            starting_col = 0
+            if len(cols) == 4:
+                # Extract Rowspan and Country Name
+                country = cols[0].text.strip().split('\n')[-1]
+                match = re.search('rowspan="(\d+)"', str(cols[0]))
+                if match:
+                    # Rowspan might be useful in future but at the moment it is not
+                    rowspan = match.group(1)
+                current_country = country
+                starting_col = 1
+
+            # Extract the rest of the rows
+            elif len(cols) == 3:
+                starting_col = 0
+
+            market_center = cols[starting_col].text.strip()
+            market_center_link = (IBKR_BASE_URL + cols[starting_col].a['href']).strip()
+            products = cols[starting_col + 1].text.strip()
+            hours = cols[starting_col + 2].text.strip()
+
+            # data.append([current_country, market_center, market_center_link, products, hours])
+            exchange_info['country'].append(current_country)
+            exchange_info['market_center_details'].append(market_center)
+            exchange_info['market_center_details_link'].append(market_center_link)
+            exchange_info['products'].append(products)
+            exchange_info['hours'].append(hours)
+
+            # market_center = cols[0].text.strip()
+            # market_center_link = cols[0].a['href']
+            # products = cols[1].text.strip()
+            if self.verbose:
+                print("=====================" + current_country + "=====================")
+                print("market_center: ", market_center)
+                print("market_center_link: ", IBKR_BASE_URL + market_center_link)
+                print("products: ", products)
+                print("hours: ", hours)
+                print("==================================")
+
+        # store all_exchange_info in a csv file
+        # print(self.all_exchange_info)
+        # df = pd.DataFrame(self.all_exchange_info)
+        # df.to_csv('all_ibkr_exchange.csv', index=False)
+        # break
+        return pd.DataFrame(exchange_info)
+
+    def get_all_exchanges(self):
+        print("========= ALL EXCHANGES =========")
+        print(self.all_products)
+        # for product, product_link in ALL_PRODUCTS_NAMES.items():
+        for product_counter in tqdm(range(len(self.all_products['link']))):
+            more_page_to_load = True
+            link_to_load = self.all_products['link'][product_counter]
+            page_soup = self.get_text_from_url(link_to_load)
+            print("---------", self.all_products['product_name'][product_counter] + "/" +
+                      self.all_products['product_region'][product_counter], "---------")
+            print('Loading ', link_to_load)
+
+            list_of_exchanges = self.get_product_exchange_list(page_soup)
+            if len(list_of_exchanges) > 0:
+                list_of_exchanges.to_csv(self.save_data_root_folder + "/" +
+                                             self.all_products['product_name'][product_counter] +
+                                             "/" + self.all_products['product_region'][product_counter] +
+                                            ".csv", index=False)
+
+
+    def exchange_symbols(self, soup):
         tbodies = soup.find_all('tbody')
         counter = 0
         td = tbodies[2].find_all('td')
@@ -120,109 +241,14 @@ class AllIBKRSymbols:
                 self.all_symbol_info['currency'].append(t.text)
             td_counter += 1
 
-    def find_regions(self, soup):
-        #view-source:https://www.interactivebrokers.com/en/index.php?f=1563&p=stk
-        # find the first ul element with the given class
-        ul_element = soup.find("ul", class_="your-class-name")
-
-        # find all ul elements with the given class
-        ul_elements = soup.find_all("ul", class_="your-class-name")
-    def get_all_products(self):
-        for region_name, region_link in REGIONS.items():
-        for product_name in ALL_USD_PRODUCTS_NAME:
-            print("Getting all symbols for product: ", product_name)
-            url = "https://www.interactivebrokers.com/en/index.php?f=1563&p=" + ALL_USD_PRODUCTS_NAME[
-                product_name]
-            soup = self.get_text_from_url(url)
-
-            # data = []
-            rows = soup.select('tbody tr')
-            current_country = None
-            # Extract Country information and the first row data
-            for row in rows:
-                cols = row.select('td')
-                starting_col = 0
-                if len(cols) == 4:
-                    # Extract Rowspan and Country Name
-                    country = cols[0].text.strip().split('\n')[-1]
-                    match = re.search('rowspan="(\d+)"', str(cols[0]))
-                    if match:
-                        # Rowspan might be useful in future but at the moment it is not
-                        rowspan = match.group(1)
-                    current_country = country
-                    starting_col = 1
-
-                # Extract the rest of the rows
-                elif len(cols) == 3:
-                    starting_col = 0
-
-                market_center = cols[starting_col].text.strip()
-                market_center_link = cols[starting_col].a['href']
-                products = cols[starting_col + 1].text.strip()
-                hours = cols[starting_col + 2].text.strip()
-
-                # data.append([current_country, market_center, market_center_link, products, hours])
-                self.all_exchange_info['country'].append(current_country)
-                self.all_exchange_info['market_center_details'].append(market_center)
-                self.all_exchange_info['market_center_details_link'].append(market_center_link)
-                self.all_exchange_info['products'].append(products)
-                self.all_exchange_info['hours'].append(hours)
-
-                # market_center = cols[0].text.strip()
-                # market_center_link = cols[0].a['href']
-                # products = cols[1].text.strip()
-                # hours = cols[2].text.strip()
-                if self.verbose:
-                    print("=====================" + current_country + "=====================")
-                    print("market_center: ", market_center)
-                    print("market_center_link: ", IBKR_BASE_URL + market_center_link)
-                    print("products: ", products)
-                    print("hours: ", hours)
-                    print("==================================")
-                #
-                # data.append([current_country, market_center, market_center_link, products, hours])
-
-            # df = pd.DataFrame(data, columns=['Country/Region', 'Market Center Details', 'Link', 'Products', 'Hours'])
-            # df =
-            # df.to_csv('result.csv', index=False)
-
-            # counter = 0
-            # all_td = tbodies[0].find_all('td')
-            # # print(all_td)
-            # td_counter = 0
-            # for td in all_td:
-            #     print(td.text)
-            #     try:
-            #         print(td.a['href'])
-            #     except:
-            #         pass
-            #     print('------------------')
-            # for td in all_td:
-            #     if td_counter == 0:
-            #         print("Country: ", td.text)
-            #         self.all_exchange_info['country'].append(td.text)
-            #     elif td_counter % 4 == 1:
-            #         print("Market Center Details: ", td.text)
-            #         self.all_exchange_info['market_center_details'].append(td.text)
-            #         print("Market Center Details Link: ", IBKR_BASE_URL+str(td.a['href']).split("'")[0].replace(' ', ''))
-            #         self.all_exchange_info['market_center_details_link'].append(IBKR_BASE_URL+str(td.a['href']).split("'")[0].replace(' ', ''))
-            #     elif td_counter % 4 == 2:
-            #         print("Products: ", td.text)
-            #         self.all_exchange_info['products'].append(td.text)
-            #     elif td_counter % 4 == 3:
-            #         print("Hours: ", td.text)
-            #         self.all_exchange_info['hours'].append(td.text)
-            #     print("------------------")
-            #     td_counter += 1
-            # store all_exchange_info in a csv file
-            print(self.all_exchange_info)
-            df = pd.DataFrame(self.all_exchange_info)
-            df.to_csv('all_ibkr_exchange.csv', index=False)
-            break
-
 
 ibkr_data = AllIBKRSymbols()
-ibkr_data.get_all_products()
+ibkr_data.get_all_exchanges()
+
+# ibkr_data.get_product_region()
+# ibkr_data.save_product_region()
+
+# ibkr_data.get_all_products()
 
 # text = ibkr_data.get_text_from_url(url)
 # soup = ibkr_data.get_text_from_url(url)
