@@ -1,30 +1,26 @@
-# Thi is the original file.
-# Use IBKR_historic_data_retriever.py after 14 Feb 2023
 
-import csv
-import random
 
 from ibapi.client import EClient
 from ibapi.wrapper import EWrapper
 from ibapi.contract import Contract
 # from ibapi.ticktype import TickTypeEnum
-from datetime import datetime  # , timedelta, time
 import time
-
-# Code from ChatGPT ver 2
-import ibapi
-import time
-from ibapi.client import EClient
-from ibapi.wrapper import EWrapper
+import random
 import pandas as pd
+from datetime import datetime
+
+from file_utility import FileUtility
+from IBKR_Product_Listings_data_retriever import IBKRDataRetriever
 
 
-# working code from ChatGPT ver 1
+
 class IBClient(EWrapper, EClient):
-    def __init__(self, duration: str):
+    def __init__(self, duration: str, symbol_info_storage_path: str):
         EClient.__init__(self, self)
         self.data = {}
         self.duration = duration
+        self.exchange_symbol_save_path = symbol_info_storage_path
+        self.file_utility = FileUtility()
 
     def historicalData(self, reqId, bar):
         print("HistoricalData. ReqId:", reqId, "BarData.", bar)
@@ -57,14 +53,58 @@ class IBClient(EWrapper, EClient):
 
         # Save the dataframe to a csv file without the default index, but with the "date" column as the index
         print(f"Saving {symbol} to {symbol}_{self.duration}_daily_data.csv")
+
+        self.file_utility.save_data(df, self.exchange_symbol_save_path, f"{symbol}_{self.duration}_daily_data.csv",
+                                    index_flag=False)
         df.to_csv(f"{symbol}_{self.duration}_daily_data.csv", index=True, index_label="date")
         print(f"Historical data for {symbol} has been saved to {symbol}_{self.duration}_daily_data.csv.")
 
 
-
-def retrieve_historical_data(symbols):
+def retrieve_historical_data(symbols_df: pd.DataFrame, security_type: str, exchange: str) -> None:
     print("Start retrieving historical data...")
-    duration = "30 Y"
+    duration = "50 Y"
+    client = IBClient(duration)
+    client.connect("127.0.0.1", 7497, clientId=0)
+    print(client.isConnected())
+
+    # start = end - timedelta(days=365 * 30)
+
+    # extract "ibkr_symbol" and "currency" information
+    symbols = symbols_df[["ibkr_symbol", "currency"]]
+    end = datetime.now()
+
+    # loop through symbols to create Contract() objects and make API call
+    reqId = 0
+    for index, row in symbols.iterrows():
+        ibkr_symbol = row["ibkr_symbol"]
+        currency = row["currency"]
+
+        contract = Contract()
+        contract.symbol = ibkr_symbol
+        contract.secType = security_type.upper()
+        contract.currency = currency
+        contract.exchange = exchange #"SMART"
+
+        print("Contract information: ", contract.symbol, contract.secType, contract.currency, contract.exchange)
+        # This code was omitted from the original code
+        client.data[reqId] = {"symbol": ibkr_symbol, "currency": currency, "exchange": exchange, "security_type": security_type}
+
+        # make API call with specified parameters
+        client.reqHistoricalData(reqId, contract, end.strftime("%Y%m%d %H:%M:%S"), duration, "1 day", "TRADES", 0, 1,
+                                 False, [])
+        reqId += 1
+        # sleep for 1-3 second to avoid exceeding the API rate limit‘s 1 req/sec
+        # sleep_time = random.randint(1, 3)
+        # time.sleep(sleep_time)
+
+    print("Historical data retrieval is complete.")
+    # client.run()
+    print("Client is running")
+    # client.disconnect()
+
+def retrieve_historical_data_original(symbols):
+    print("Start retrieving historical data...")
+    duration = "50 Y"
     client = IBClient(duration)
     client.connect("127.0.0.1", 7497, clientId=0)
     print(client.isConnected())
@@ -103,8 +143,21 @@ if __name__ == "__main__":
     # symbols = ["XLE", "XLB", "XLF", 'AGG', 'DIA', 'DOG', 'EEM', 'EFA', 'EWA', 'EWJ', 'FXI', 'GLD', 'IJH', 'IWM', 'PSQ',
     #            'QQQ', 'RWM', 'SH', 'SLV', 'SPY', 'TLT', 'UNG', 'USO', 'VTI', 'XBI', 'XHB', 'XLR']
 
-    symbols = ['XLRE','XLC']
-    retrieve_historical_data(symbols)
+    # symbols = ['XLRE','XLC']
+
+    ibkr = IBKRDataRetriever()
+    main_equity_types = ibkr.get_main_equity_types()
+    product = main_equity_types.iloc[0]['product_name']
+    region = main_equity_types.iloc[0]['region']
+    all_exchanges = ibkr.get_exchanges_for_product_region(product, region)
+    # print(main_equity_types)
+    # print(all_exchanges)
+    country = all_exchanges.iloc[0]['country']
+    exchange = all_exchanges.iloc[0]['exchange']
+    exchange_symbols = ibkr.get_exchange_symbols(product, region, country , exchange)
+    # print(one_exchange)
+
+    retrieve_historical_data(exchange_symbols.iloc[:30], ibkr.ibkr_constants.ALL_PRODUCTS_NAMES[product],exchange)
 
 # Not Working Code:
 # class IbkrHistoricData(EWrapper, EClient):

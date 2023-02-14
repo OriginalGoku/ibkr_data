@@ -1,96 +1,32 @@
-# This is the original working file.
-# Don't use this file.
-# Use IBKR_symbol_scraper_optimized_13_feb_2023.py instead
-
 import time
 
 import requests
 from bs4 import BeautifulSoup
-import logging
 import pandas as pd
-import os
 import re
 from tqdm import tqdm
-from collections import OrderedDict
 from file_utility import FileUtility
 import logging
-
-# from dataclasses import dataclass
-
-# Currencies and Metal are not included because they have a different format
-# ALL_PRODUCTS_NAMES = {'Stocks': 'stk',
-#                       'Options': 'opt',
-#                       'Futures': 'fut',
-#                       'FOPs': 'fop',
-#                       'ETFs': 'etf',
-#                       'Warrants': 'war',
-#                       'Structured Products': 'iopt',
-#                       'SSFs': 'ssf',
-#                       # 'Currencies': 'fx',
-#                       # 'Metals': 'cmdty',
-#                       'Indices': 'ind',
-#                       'Fixed Income': 'bond',
-#                       'Mutual Funds': 'mf'}
+from IBKR_constants import IBKRConstants
 
 
-hdr = {
-    "authority": "interactivebrokers.com",
-    "method": "GET",
-    "scheme": "https",
-    "accept": "text/html",
-    "accept-encoding": "gzip, deflate, br",
-    "accept-language": "en-US,en;q=0.9",
-    "cache-control": "no-cache",
-    "dnt": "1",
-    "pragma": "no-cache",
-    "sec-fetch-mode": "navigate",
-    "sec-fetch-site": "same-origin",
-    "sec-fetch-user": "?1",
-    "upgrade-insecure-requests": "1",
-    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.98 Safari/537.36"
-}
-
-LOG_FILE_NAME = "log.txt"
-    MISSING_DATA_TEXT = 'Missing Data From the Website'
-    MISSING_CONID = 0
-    ALL_PRODUCTS_NAMES = OrderedDict([
-        ('Stocks', 'stk'),
-        ('Options', 'opt'),
-        ('Futures', 'fut'),
-        ('FOPs', 'fop'),
-        ('ETFs', 'etf'),
-        ('Warrants', 'war'),
-        ('Structured Products', 'iopt'),
-        ('SSFs', 'ssf'),
-        ('Indices', 'ind'),
-        ('Fixed Income', 'bond'),
-        ('Mutual Funds', 'mf')])
-
-    REGIONS = ["North America", "Europe", "Asia-Pacific"]
-    IBKR_BASE_URL = 'https://www.interactivebrokers.com/en/'
-    IBKR_URL = 'https://www.interactivebrokers.com'
-    IBKR_PRODUCT_LISTINGS_URL = 'https://www.interactivebrokers.com/en/index.php?f=2222'
-    PRODUCT_DATA_ROOT_FOLDER = 'IBKR Product Listings'
 class AllIBKRSymbols:
     # Class Level Variables
 
     def __init__(self, verbose=False):
 
-        self.save_data_root_folder = PRODUCT_DATA_ROOT_FOLDER
+        self.IBKR_constants = IBKRConstants()
+        self.save_data_root_folder = self.IBKR_constants.PRODUCT_DATA_ROOT_FOLDER
         self.file_utility = FileUtility(self.save_data_root_folder, self.save_data_root_folder)
         self.verbose = verbose
         # Set up the logging
         logging.basicConfig(
             level=logging.INFO,
             format='%(message)s',
-            handlers=[logging.FileHandler(LOG_FILE_NAME)]
+            handlers=[logging.FileHandler(self.IBKR_constants.LOG_FILE_NAME)]
         )
 
-    @staticmethod
-    def _generate_metadata_file_name(product, region, country=None, exchange=None):
-        if exchange:
-            return product + "-" + region + " (" + country + ") [" + exchange.replace("/", '-') + "] Metadata"
-        return product + "-" + region + " Metadata"
+
 
     # Original not optimized
     # def get_text_from_url(the_url):
@@ -125,27 +61,23 @@ class AllIBKRSymbols:
     #     # return r.text
     #     return BeautifulSoup(r.text, 'html.parser')
 
-    @staticmethod
-    def get_text_from_url(the_url):
+    def get_text_from_url(self, the_url):
         """
         This function loads the URL and returns the text as a BeautifulSoup object
         :param the_url: full url to load
         :return: BeautifulSoup object
         """
-        global hdr
-        hdr["path"] = the_url
+        self.IBKR_constants.HDR["path"] = the_url
+        # hdr["path"] = the_url
 
         for _ in range(3):
             try:
-                r = requests.get(the_url, headers=hdr)
+                r = requests.get(the_url, headers=self.IBKR_constants.HDR["path"])
                 r.raise_for_status()
                 return BeautifulSoup(r.text, 'html.parser')
             except requests.exceptions.HTTPError as errh:
                 print("Http Error:", errh)
                 logging.warning(f"Http Error: {errh}")
-            except requests.exceptions.ConnectionError as errc:
-                print("Error Connecting:", errc)
-                logging.warning(f"Error Connecting: {errc.status_code}")
             except (requests.exceptions.Timeout, requests.exceptions.RequestException) as err:
                 print(f"Request Error: {err}")
                 logging.warning(f"Request Error: {err.status_code}")
@@ -153,7 +85,7 @@ class AllIBKRSymbols:
             print("Waiting 1 sec to see if problem resolved then retry")
             time.sleep(1)
 
-        raise Exception("Failed to load the URL after multiple attempts.")
+        raise Exception("Failed to load the URL after 3 attempts.")
 
     # 1. Get all Product Listings
     def generate_IBKR_product_listings(self):
@@ -167,8 +99,8 @@ class AllIBKRSymbols:
 
         """
         all_products = []
-        product_url = 'https://www.interactivebrokers.com/en/index.php?f=1563&p='
-        for product, product_link in ALL_PRODUCTS_NAMES.items():
+        product_url = self.IBKR_constants.IBKR_PRODUCT_URL
+        for product, product_link in self.IBKR_constants.ALL_PRODUCTS_NAMES.items():
             link_to_load = product_url + product_link
             page_soup = self.get_text_from_url(link_to_load)
             if self.verbose:
@@ -193,7 +125,6 @@ class AllIBKRSymbols:
         df = pd.DataFrame(all_products)
         self.file_utility.save_data(df, "", self.save_data_root_folder, index_flag=False)
 
-
     # 1.1 Find all regions for each product in Product Listings
     def _find_regions(self, product_name, soup):
         """
@@ -209,10 +140,10 @@ class AllIBKRSymbols:
             for li in all_li:
                 regions["product_name"].append(product_name)
                 regions["region"].append(li.text.strip())
-                regions["link"].append((IBKR_URL + li.a['href']).strip())
+                regions["link"].append((self.IBKR_constants.IBKR_URL + li.a['href']).strip())
                 if self.verbose:
                     print('Region', li.text.strip())
-                    print('Region Link', (IBKR_URL + li.a['href']).strip())
+                    print('Region Link', (self.IBKR_constants.IBKR_URL + li.a['href']).strip())
                     print("Creating Directory: ",
                           self.save_data_root_folder + "/" + product_name + "/" + li.text.strip())
                 self.file_utility.create_directory(
@@ -294,7 +225,7 @@ class AllIBKRSymbols:
 
             # Extract exchange, exchange link, products, and hours information
             market_center = cols[starting_col].text.strip()
-            market_center_link = (IBKR_BASE_URL + cols[starting_col].a['href']).strip()
+            market_center_link = (self.IBKR_constants.IBKR_BASE_URL + cols[starting_col].a['href']).strip()
             products = cols[starting_col + 1].text.strip()
             hours = cols[starting_col + 2].text.strip()
 
@@ -318,7 +249,7 @@ class AllIBKRSymbols:
             if self.verbose:
                 print("=====================" + current_country + "=====================")
                 print("exchange: ", market_center)
-                print("exchange_link: ", IBKR_BASE_URL + market_center_link)
+                print("exchange_link: ", self.IBKR_constants.IBKR_BASE_URL + market_center_link)
                 print("products: ", products)
                 print("hours: ", hours)
                 print("==================================")
@@ -343,11 +274,8 @@ class AllIBKRSymbols:
 
         # print(exchange_data)
         for exchange_counter in tqdm(range(len(exchange_data['exchange_link']))):
-
-            if len(exchange_country) > 0:
-                exchange_country = exchange_data.iloc[exchange_counter]['country']
-            else:
-                exchange_country = "Global"
+            exchange_country = exchange_data.iloc[exchange_counter]['country'] if len(
+                exchange_data.iloc[exchange_counter]['exchange_country']) > 0 else "Global"
 
             exchange_folder = exchange_country + "/" + exchange_data.iloc[exchange_counter][
                 'exchange'].replace("/", '-')
@@ -381,10 +309,10 @@ class AllIBKRSymbols:
                 product_dictionary['first_page_link'].extend(f1)
                 product_dictionary['product_no_of_pages'].extend(n1)
         else:
-            return pd.DataFrame({'product_name': [MISSING_DATA_TEXT],
-                                 'product_link': [MISSING_DATA_TEXT],
-                                 'first_page_link': [MISSING_DATA_TEXT],
-                                 'product_no_of_pages': [MISSING_DATA_TEXT]}, index=[0])
+            return pd.DataFrame({'product_name': [self.IBKR_constants.MISSING_DATA_TEXT],
+                                 'product_link': [self.IBKR_constants.MISSING_DATA_TEXT],
+                                 'first_page_link': [self.IBKR_constants.MISSING_DATA_TEXT],
+                                 'product_no_of_pages': [self.IBKR_constants.MISSING_DATA_TEXT]}, index=[0])
 
         # product_dictionary['first_page_link'], product_dictionary['product_no_of_pages'] = self.get_product_first_link_and_no_of_pages(page_soup)
         return pd.DataFrame(product_dictionary)
@@ -399,21 +327,18 @@ class AllIBKRSymbols:
             return [], []
         # if not div.contents:
         for content in div.contents:
-            try:
-                if len(content.text.strip()) > 0:
-                    print("Product Type: ", content.text.strip())
-                    product_name.append(content.text.strip())
-                    link_to_append = None
-                    if content.a['href'] != '#':
-                        link_to_append = IBKR_URL + content.a['href']
-                    elif content.a['href'] == '#':
-                        link_to_append = link
+            if len(content.text.strip()) > 0:
+                print("Product Type: ", content.text.strip())
+                product_name.append(content.text.strip())
+                link_to_append = None
+                if content.a['href'] != '#':
+                    link_to_append = self.IBKR_constants.IBKR_URL + content.a['href']
+                elif content.a['href'] == '#':
+                    link_to_append = link
 
-                    product_link.append(link_to_append)
-                    print("Product Link: ", link_to_append)
-                    # exchange_link.append(exchange_link_address)
-            except:
-                print("No content")
+                product_link.append(link_to_append)
+                print("Product Link: ", link_to_append)
+                # exchange_link.append(exchange_link_address)
 
         # else:
         #     return [], []
@@ -428,26 +353,15 @@ class AllIBKRSymbols:
 
         try:
             lis = ul.find_all('li')
-            f = IBKR_URL + lis[1].a['href']
-            print(f)
+            f = self.IBKR_constants.IBKR_URL + lis[1].a['href']
             n = lis[-2].text
-            print(n)
         except:
-            # first_link.append(link)
-            # no_of_pages.append(1)
             f = link
             n = 1
 
         no_of_pages.append(n)
         first_link.append(f)
-        # for li in lis:
-        #     try:
-        #         print("No of pages: ", li.text)
-        #         no_of_pages.append(li.text)
-        #         print("linke: ", li.a['href'])
-        #         first_link.append(IBKR_URL + li.a['href'])
-        #     except:
-        #         print("No link")
+
         return first_link, no_of_pages
 
     def generate_all_symbols(self):
@@ -488,7 +402,8 @@ class AllIBKRSymbols:
 
             if (not self._is_exchange_product_in_log(exchange, product_name)) and \
                     (str(
-                        exchange_meta_data.iloc[exchange_counter]['product_no_of_pages']).strip() != MISSING_DATA_TEXT):
+                        exchange_meta_data.iloc[exchange_counter][
+                            'product_no_of_pages']).strip() != self.IBKR_constants.MISSING_DATA_TEXT):
                 print("starting to retrieve information for {} in {}".format(product_name, exchange))
                 for page_number in range(int(exchange_meta_data.iloc[exchange_counter]['product_no_of_pages'])):
                     exchange_link = exchange_meta_data.iloc[exchange_counter]['first_page_link'][:-1] + str(
@@ -551,12 +466,12 @@ class AllIBKRSymbols:
                     # print("product_link: ", str(t.a['href']).split("'")[1].replace(' ', ''))
                     # self.all_symbol_info['product_link'].append(str(t.a['href']).split("'")[1].replace(' ', ''))
                     # product_link.append(str(t.a['href']).split("'")[1].replace(' ', ''))
-                    product_link.append(MISSING_DATA_TEXT)
+                    product_link.append(self.IBKR_constants.MISSING_DATA_TEXT)
 
                     # print("conid: ", str(t.a['href']).split("conid=")[1].replace(' ', '').split("'")[0])
                     # self.all_symbol_info['conid'].append(str(t.a['href']).split("conid=")[1].replace(' ', '').split("'")[0])
                     # conid.append(str(t.a['href']).split("conid=")[1].replace(' ', '').split("'")[0])
-                    conid.append(MISSING_CONID)
+                    conid.append(self.IBKR_constants.MISSING_CONID)
 
             elif td_counter % 4 == 2:
                 print("Symbol: ", t.text)
@@ -597,15 +512,15 @@ class AllIBKRSymbols:
         return False
 
 
-list_of_products = list(ALL_PRODUCTS_NAMES.keys())
-product = list_of_products[0]
-region = REGIONS[0]
-country = 'United States'
-exchange = 'Bats Global Markets (BATS)'
+# list_of_products = list(self.IBKR_constants.ALL_PRODUCTS_NAMES.keys())
+# product = list_of_products[0]
+# region = REGIONS[0]
+# country = 'United States'
+# exchange = 'Bats Global Markets (BATS)'
 
 ibkr_data = AllIBKRSymbols(verbose=False)
 # ibkr_data.generate_IBKR_product_listings()
 # ibkr_data.generate_regional_exchange_information()
 # ibkr_data.generate_all_meta_data()
 # ibkr_data.generate_all_symbols()
-ibkr_data._generate_meta_data_for_region
+# ibkr_data._generate_meta_data_for_region()
