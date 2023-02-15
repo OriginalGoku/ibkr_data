@@ -5,7 +5,7 @@ from file_utility import FileUtility
 class IBKRDataRetriever:
     def __init__(self):
         self.ibkr_constants = IBKRConstants()
-        self.file_utility = FileUtility()
+        self.file_utility = FileUtility(verbose=True)
         self.main_data = self.get_main_equity_types()
 
     def get_main_equity_types(self):
@@ -13,8 +13,8 @@ class IBKRDataRetriever:
         Get a list of all equity types.
         :return: List[str], a list of all equity types
         """
-        return self.file_utility.load_file(self.ibkr_constants.PRODUCT_DATA_ROOT_FOLDER,
-                                           self.ibkr_constants.PRODUCT_DATA_ROOT_FOLDER + '.csv')
+        return self.file_utility.load_file(self.ibkr_constants.PRODUCT_DATA_ROOT_FOLDER + '.csv',
+                                           self.ibkr_constants.PRODUCT_DATA_ROOT_FOLDER)
 
     def get_exchanges_for_product_region(self, product, region):
         """
@@ -26,7 +26,7 @@ class IBKRDataRetriever:
         file_name = self.ibkr_constants.generate_file_name(product, region)
         file_path = f"{self.ibkr_constants.PRODUCT_DATA_ROOT_FOLDER}/{product}/{region}"
 
-        return self.file_utility.load_file(file_path, file_name)
+        return self.file_utility.load_file(file_name, file_path)
 
     def get_exchange_symbols(self, product, region, country, exchange):
         """
@@ -38,6 +38,6 @@ class IBKRDataRetriever:
         """
         file_name = self.ibkr_constants.generate_file_name(product, region, country, exchange, product)
         file_path = f"{self.ibkr_constants.PRODUCT_DATA_ROOT_FOLDER}/{product}/{region}/{country}/{exchange}/{product}"
-        return self.file_utility.load_file(file_path, file_name)
+        return self.file_utility.load_file(file_name, file_path)
 
 
