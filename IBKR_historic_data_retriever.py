@@ -1,4 +1,5 @@
 import csv
+import os
 
 import pytz
 from ibapi.client import EClient
@@ -11,22 +12,26 @@ import pandas as pd
 from datetime import datetime, timezone, timedelta
 import logging
 
+from tqdm import tqdm
+
 from file_utility import FileUtility
 from IBKR_Product_Listings_data_retriever import IBKRDataRetriever
 
 
 
 class IBClient(EWrapper, EClient):
-    def __init__(self, duration: str, root_path: str, exchange_path: str):
+    def __init__(self, duration: str, root_path: str, exchange_path: str, symbols_saved_logger:str = 'symbol_saved.csv'):
         EClient.__init__(self, self)
         self.data = {}
         self.duration = duration
         self.root_path = root_path
-        self.file_utility = FileUtility()
+        self.file_utility = FileUtility(verbose=True)
         self.file_utility.create_directory(self.root_path)
         self.exchange_path = exchange_path
         self.file_utility.create_directory(self.root_path + "/" + self.exchange_path)
-        self.currency = None
+        self.symbols_saved_logger = symbols_saved_logger
+        self.total_number_of_symbols_to_retrieve = 0
+        self.saved_symbol_counter = 0
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s %(message)s',
@@ -57,6 +62,7 @@ class IBClient(EWrapper, EClient):
     #     print(f"Historical data for {symbol} has been saved to {filename}.")
     def historicalDataEnd(self, reqId, start, end):
         symbol = self.data[reqId]["symbol"]
+
         df = pd.DataFrame(self.data[symbol], columns=["date", "open", "high", "low", "close", "volume", "wap",
                                                       "trade_count"])
         # Convert the "Date" column into pandas datetime objects
@@ -66,31 +72,88 @@ class IBClient(EWrapper, EClient):
         df.set_index("date", inplace=True)
 
         # Save the dataframe to a csv file without the default index, but with the "date" column as the index
-        print(f"Saving {symbol} to {symbol}_{self.duration}_daily_data.csv")
+        print(f"Saving reqId {reqId} - self.saved_symbol_counter {self.saved_symbol_counter } : "
+              f"{symbol} to {symbol}_{self.duration}_daily_data.csv")
 
         self.file_utility.save_data(df, f"{symbol}_{self.duration}_daily_data.csv", self.root_path+"/"+self.exchange_path,
                                     index_label="date")
+
         # df.to_csv(f"{symbol}_{self.duration}_daily_data.csv", index=True, index_label="date")
-        print(f"Historical data for {symbol} has been saved to {symbol}_{self.duration}_daily_data.csv.")
+        # print(f"Historical data for {symbol} has been saved to {symbol}_{self.duration}_daily_data.csv.")
         # logging.info(f"Symbol: {symbol} - Currency: {self.currency}")
         # save_symbol(symbol, self.currency)
 
-        with open('symbol_saved.csv', mode='a', newline='') as file:
+
+        # Open the file in append mode and write the new row to the CSV file
+        with open(self.symbols_saved_logger, mode='a', newline='') as file:
             writer = csv.writer(file)
+            symbol_row = [self.data[reqId]['country'], self.data[reqId]['exchange'],
+                          self.data[reqId]['security_type'].upper(), symbol, self.data[reqId]['currency'], len(df)]
+            file.write('\n')  # move file pointer to beginning of new line
+            writer.writerow(symbol_row)
 
-            # Write the new row to the CSV file
-            writer.writerow([symbol, self.currency])
+        self.saved_symbol_counter += 1
+        # Can not use this because the returned reqId come at random so we might get the result for the last reqId
+        # before the result for the previous reqId's
+        if self.total_number_of_symbols_to_retrieve < (self.saved_symbol_counter+1):
+            print("All symbols have been retrieved. Exiting program.")
+            self.disconnect()
+            print("Disconnected from IBKR API.")
 
 
+def get_new_symbols(all_symbols: pd.DataFrame, saved_symbols: pd.DataFrame) -> pd.DataFrame:
+    """
+    Return a dataframe containing symbols in all_symbols that are not present in saved_symbols.
 
-def retrieve_historical_data(symbols_df: pd.DataFrame, security_type: str, exchange: str, root_path: str, mode:str, exchange_path: str) -> None:
+    :param all_symbols: A pandas dataframe containing all symbols to check.
+    :param saved_symbols: A pandas dataframe containing symbols that have already been saved.
+    :return: A pandas dataframe containing symbols in all_symbols that are not present in saved_symbols.
+    """
+
+    # Merge the two dataframes on "symbol" and "currency"
+    # and only select the "symbol" and "currency" columns from the saved_symbols
+    merged_symbols = pd.merge(all_symbols, saved_symbols[['ibkr_symbol', 'currency']], on=["ibkr_symbol", "currency"],
+                              how="outer", indicator=True)
+
+    # Filter the rows that are only in the all_symbols dataframe
+    new_symbols = merged_symbols[merged_symbols['_merge'] == 'left_only']
+
+    # Print the length of the input dataframes and the resulting dataframe for debugging
+    # print(f"Input: all_symbols - {len(all_symbols)}, saved_symbols - {len(saved_symbols)} | Output: new_symbols - {len(new_symbols)} ")
+
+    # Print the columns and first few rows of the resulting dataframe for debugging
+    # print(new_symbols.columns)
+    # print(new_symbols.head())
+    # print("--------------------")
+    # print(saved_symbols.head())
+
+    # Return the resulting dataframe with all columns except the _merge column
+    return new_symbols[new_symbols.columns[:-1]]
+
+def retrieve_historical_data(symbols_df: pd.DataFrame, security_type: str, exchange: str, root_path: str, mode:str,
+                             exchange_path: str, country: str) -> None:
     print("Start retrieving historical data...")
     duration = "30 Y"
-    currency = symbols_df.iloc[0]['currency']
-
     client = IBClient(duration, root_path, exchange_path)
-    client.currency = currency
-    # client.file_utility.create_directory(root_path+"/"+exchange_path)
+
+    # Check if the file exists, and create it with the header row if it does not
+    if not os.path.isfile(client.symbols_saved_logger):
+        with open(client.symbols_saved_logger, mode='w', newline='') as file:
+            writer = csv.writer(file)
+            header_row = ['country', 'exchange', 'security_type', 'symbol', 'currency', 'no_of_rows']
+            writer.writerow(header_row)
+            print("Created file: ", client.symbols_saved_logger)
+
+    saved_symbols = client.file_utility.load_file(client.symbols_saved_logger, None)
+
+    # print(saved_symbols.head())
+    # print("----============-------")
+    saved_symbols.columns = ["country", "exchange", "security_type", "ibkr_symbol", "currency", "no_of_rows"]
+    symbols_df = get_new_symbols(symbols_df, saved_symbols)
+
+    client.total_number_of_symbols_to_retrieve = len(symbols_df)
+    # print("Total number of symbols to retrieve: ", client.total_number_of_symbols_to_retrieve)
+
     if mode == "disconnect":
         print("Disconnecting client")
         client.disconnect()
@@ -103,36 +166,14 @@ def retrieve_historical_data(symbols_df: pd.DataFrame, security_type: str, excha
         print("client is connected: " , client.isConnected())
 
 
-    # start = end - timedelta(days=365 * 30)
-
-    # extract "ibkr_symbol" and "currency" information
     symbols = symbols_df[["ibkr_symbol", "currency"]]
-    # start_time = end_time - timedelta(days=30 * 365)
-    # end_time = datetime.now()
-    # end_str = end_time.strftime("%Y%m%d %H:%M:%S")
-    # ent_str = end_str+" US/Eastern"
-    # start_str = start_time.strftime("%Y%m%d %H:%M:%S")
-    # end_time = int(time.time())
-    # end_time = datetime.now(tz=pytz.timezone('US/Eastern'))
-    # end_str = end_time.strftime("%Y%m%d %H:%M:%S %Z")
-    # end_str = "20230214 17:00:00 US/Eastern"
-
-    # end_time = datetime.now(tz=pytz.timezone('US/Eastern'))
-    # end_str = end_time.strftime("%Y%m%d %H:%M:%S %Z")
-    # end_str = str("20230214-17:00:00")
-    # end_str = str("17:00:00 US/Eastern")
     end_str = (datetime.today()).strftime("%Y%m%d-%H:%M:%S")
-    #- timedelta(days=365*30)
-
-    # convert end to UTC
-    # end_utc = end.astimezone(timezone.utc)
-
-    # format end_utc in yyyymmdd-hh:mm:ss in UTC
-    # end_str = end_utc.strftime("%Y%m%d-%H:%M:%S")
 
     # loop through symbols to create Contract() objects and make API call
     reqId = 0
-    for index, row in symbols.iterrows():
+    # for index, row in symbols.iterrows():
+    for index, row in tqdm(symbols.iterrows(), total=symbols.shape[0]):
+
         ibkr_symbol = row["ibkr_symbol"]
         currency = row["currency"]
 
@@ -142,26 +183,28 @@ def retrieve_historical_data(symbols_df: pd.DataFrame, security_type: str, excha
         contract.currency = currency
         contract.exchange = exchange #"SMART"
 
-        print("Contract information: ", contract.symbol, contract.secType, contract.currency, contract.exchange)
+        print("Contract no: ", reqId, " : ", contract.symbol, contract.secType, contract.currency, contract.exchange)
         # This code was omitted from the original code
-        client.data[reqId] = {"symbol": ibkr_symbol, "currency": currency, "exchange": exchange, "security_type": security_type}
+        client.data[reqId] = {"symbol": ibkr_symbol, "currency": currency, "exchange": exchange,
+                              "security_type": security_type, 'country': country}
 
         if mode != "test":
             # make API call with specified parameters
             client.reqHistoricalData(reqId, contract, end_str, duration, "1 day", "TRADES", 0, 1, False, [])
+            # sleep for 1-3 second to avoid exceeding the API rate limit‘s 1 req/sec
+            sleep_time = random.randint(1, 3)
+            print(f"Sleeping for {sleep_time} seconds...")
+            time.sleep(sleep_time)
         reqId += 1
-        # sleep for 1-3 second to avoid exceeding the API rate limit‘s 1 req/sec
-        sleep_time = random.randint(1, 3)
-        print(f"Sleeping for {sleep_time} seconds...")
-        time.sleep(sleep_time)
+
 
     print("Historical data retrieval is complete.")
     if mode != "test":
         client.run()
-        print("Client is running")
+    print("Client is connected: ", client.isConnected())
+
     # time.sleep(20)
     # client.disconnect()
-    # print("Client is disconnected")
 
 def retrieve_historical_data_original(symbols):
     print("Start retrieving historical data...")
@@ -201,36 +244,26 @@ def retrieve_historical_data_original(symbols):
 
 if __name__ == "__main__":
     print('Start Main Program')
-    # symbols = ["AAPL", "IBM", "GOOG"]
-    # symbols = ["XLK", "XLV", "XLY"] #, "XLP", "XLE", "XLF", "XLB", "XLU"]
-    # symbols = ["XLE", "XLB", "XLF", 'AGG', 'DIA', 'DOG', 'EEM', 'EFA', 'EWA', 'EWJ', 'FXI', 'GLD', 'IJH', 'IWM', 'PSQ',
-    #            'QQQ', 'RWM', 'SH', 'SLV', 'SPY', 'TLT', 'UNG', 'USO', 'VTI', 'XBI', 'XHB', 'XLR']
-
-    # symbols = ['XLRE','XLC']
 
     ibkr = IBKRDataRetriever()
     main_equity_types = ibkr.get_main_equity_types()
     product = main_equity_types.iloc[0]['product_name']
     region = main_equity_types.iloc[0]['region']
     all_exchanges = ibkr.get_exchanges_for_product_region(product, region)
-    # print(main_equity_types)
-    # print(all_exchanges)
     country = all_exchanges.iloc[0]['country']
-    # exchange = all_exchanges.iloc[0]['exchange']
+
     exchange = 'ArcaEdge'
     root_path = ibkr.ibkr_constants.SYMBOL_DATA_ROOT_FOLDER
     exchange_symbols = ibkr.get_exchange_symbols(product, region, country , exchange)
-    # print(one_exchange)
-    print(exchange)
-    # file_utility = FileUtility(verbose=True)
-    # file_utility.save_data(main_equity_types, "main_equity_types.csv")
+
     exchange_path = product + "/" + region + "/" + country + "/" + exchange
 
-    mode = "disconnect"
-    # end = datetime.now()
-    # end_str = end.strftime("%Y%m%d %H:%M:%S")
-    # print(end_str)
-    retrieve_historical_data(exchange_symbols.iloc[10:15], ibkr.ibkr_constants.ALL_PRODUCTS_NAMES[product],exchange, root_path, mode, exchange_path)
+    mode = ["test", "train", "disconnect"]
+    # run 1: [550, 1000], run 2: [1000, 1500], run 3: [1500, 2000], run 4: [2000, 2500], run 5: [2500, 3000]
+    start = 1520
+    end = 2500
+    retrieve_historical_data(exchange_symbols.iloc[start:end], ibkr.ibkr_constants.ALL_PRODUCTS_NAMES[product], exchange, root_path,
+                             mode[1], exchange_path, country)
 
 
 # Not Working Code:
