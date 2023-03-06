@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 
 class MyWrapper(EWrapper):
     def __init__(self):
+        super().__init__()
         self.data = []
 
     def historicalData(self, reqId: int, bar: BarData):
@@ -38,19 +39,22 @@ def retrieve_data():
     client.connect("127.0.0.1", 7497, 0)
     print("client.isConnected(): ", client.isConnected())
 
-    end_time = datetime.now()
-    start_time = end_time - timedelta(days=365)
-    end_str = end_time.strftime("%Y%m%d %H:%M:%S")
-    start_str = start_time.strftime("%Y%m%d %H:%M:%S")
+    # end_time = datetime.now()
+    # start_time = end_time - timedelta(days=3650)
+    # end_str = end_time.strftime("%Y%m%d %H:%M:%S")
+    # start_str = start_time.strftime("%Y%m%d %H:%M:%S")
+
+    end_str = (datetime.today()).strftime("%Y%m%d-%H:%M:%S")
 
     contract = Contract()
-    contract.symbol = "SPY"
+    # contract.symbol = "SPY"
+    contract.symbol = "SSCC"
     contract.secType = "STK"
     contract.exchange = "SMART"
     contract.currency = "USD"
-    contract.primaryExchange = "NYSE"
+    # contract.primaryExchange = "NYSE"
 
-    client.reqHistoricalData(1, contract, end_str, "365 D", "1 day", "TRADES", 0, 1, False, [])
+    client.reqHistoricalData(1, contract, end_str, "5 Y", "1 day", "TRADES", 0, 1, False, [])
 
     client.run()
 
@@ -64,4 +68,5 @@ def retrieve_data():
     return df
 
 data = retrieve_data()
-data.to_csv('SPY_1_day_bars.csv')
+data.to_csv('SSCC_30.csv')
+

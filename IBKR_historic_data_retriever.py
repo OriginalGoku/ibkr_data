@@ -16,7 +16,7 @@ from tqdm import tqdm
 
 from file_utility import FileUtility
 from IBKR_Product_Listings_data_retriever import IBKRDataRetriever
-
+from line_printer import LinePrinter
 
 
 class IBClient(EWrapper, EClient):
@@ -87,9 +87,8 @@ class IBClient(EWrapper, EClient):
         # Open the file in append mode and write the new row to the CSV file
         with open(self.symbols_saved_logger, mode='a', newline='') as file:
             writer = csv.writer(file)
-            symbol_row = [self.data[reqId]['country'], self.data[reqId]['exchange'],
+            symbol_row = [datetime.today(), self.data[reqId]['country'], self.data[reqId]['exchange'],
                           self.data[reqId]['security_type'].upper(), symbol, self.data[reqId]['currency'], len(df)]
-            file.write('\n')  # move file pointer to beginning of new line
             writer.writerow(symbol_row)
 
         self.saved_symbol_counter += 1
@@ -110,6 +109,8 @@ def get_new_symbols(all_symbols: pd.DataFrame, saved_symbols: pd.DataFrame) -> p
     :return: A pandas dataframe containing symbols in all_symbols that are not present in saved_symbols.
     """
 
+    if len(saved_symbols)<1:
+        return all_symbols
     # Merge the two dataframes on "symbol" and "currency"
     # and only select the "symbol" and "currency" columns from the saved_symbols
     merged_symbols = pd.merge(all_symbols, saved_symbols[['ibkr_symbol', 'currency']], on=["ibkr_symbol", "currency"],
@@ -136,34 +137,41 @@ def retrieve_historical_data(symbols_df: pd.DataFrame, security_type: str, excha
     duration = "30 Y"
     client = IBClient(duration, root_path, exchange_path)
 
+    saved_symbols_header_row = ["updating_date", 'country', 'exchange', 'security_type', 'symbol', 'currency', 'no_of_rows']
     # Check if the file exists, and create it with the header row if it does not
     if not os.path.isfile(client.symbols_saved_logger):
         with open(client.symbols_saved_logger, mode='w', newline='') as file:
             writer = csv.writer(file)
-            header_row = ['country', 'exchange', 'security_type', 'symbol', 'currency', 'no_of_rows']
-            writer.writerow(header_row)
+            writer.writerow(saved_symbols_header_row)
             print("Created file: ", client.symbols_saved_logger)
+
 
     saved_symbols = client.file_utility.load_file(client.symbols_saved_logger, None)
 
     # print(saved_symbols.head())
     # print("----============-------")
-    saved_symbols.columns = ["country", "exchange", "security_type", "ibkr_symbol", "currency", "no_of_rows"]
+    saved_symbols.columns = saved_symbols_header_row
     symbols_df = get_new_symbols(symbols_df, saved_symbols)
 
+    # move file pointer to beginning of new line
+    if len(symbols_df) > 0:
+        with open(client.symbols_saved_logger, 'a') as f:
+            f.write('\n')
+
     client.total_number_of_symbols_to_retrieve = len(symbols_df)
+    LinePrinter().print_text("Total number of symbols to retrieve: " + str(client.total_number_of_symbols_to_retrieve))
     # print("Total number of symbols to retrieve: ", client.total_number_of_symbols_to_retrieve)
 
     if mode == "disconnect":
         print("Disconnecting client")
         client.disconnect()
         time.sleep(5)
-        print("client is connected: " , client.isConnected())
+        print("client is connected: ", client.isConnected())
 
     if mode != "test":
         print("Connecting client...")
         client.connect("127.0.0.1", 7497, clientId=0)
-        print("client is connected: " , client.isConnected())
+        print("client is connected: ", client.isConnected())
 
 
     symbols = symbols_df[["ibkr_symbol", "currency"]]
@@ -185,7 +193,7 @@ def retrieve_historical_data(symbols_df: pd.DataFrame, security_type: str, excha
 
         print("Contract no: ", reqId, " : ", contract.symbol, contract.secType, contract.currency, contract.exchange)
         # This code was omitted from the original code
-        client.data[reqId] = {"symbol": ibkr_symbol, "currency": currency, "exchange": exchange,
+        client.data[reqId] = {"updating_date": datetime.today(), "symbol": ibkr_symbol, "currency": currency, "exchange": exchange,
                               "security_type": security_type, 'country': country}
 
         if mode != "test":
@@ -206,65 +214,86 @@ def retrieve_historical_data(symbols_df: pd.DataFrame, security_type: str, excha
     # time.sleep(20)
     # client.disconnect()
 
-def retrieve_historical_data_original(symbols):
-    print("Start retrieving historical data...")
-    duration = "50 Y"
-    client = IBClient(duration)
-    client.connect("127.0.0.1", 7497, clientId=0)
-    print(client.isConnected())
-
-    end = datetime.now()
-    # start = end - timedelta(days=365 * 30)
-
-    reqId = 2
-    for symbol in symbols:
-        contract = Contract()
-        contract.symbol = symbol
-        contract.secType = "STK"
-        contract.exchange = "SMART"
-        contract.currency = "USD"
-        client.data[reqId] = {"symbol": symbol}
-        print(contract.symbol)
-        client.reqHistoricalData(reqId, contract, end.strftime("%Y%m%d %H:%M:%S"), duration, "1 day", "TRADES", 0, 1,
-                                 False, [])
-        print("Requeting historical data for " + symbol + " Finished")
-
-        reqId += 1
-        # sleep for 1-3 second to avoid exceeding the API rate limit‘s 1 req/sec
-        sleep_time = random.randint(1, 3)
-        time.sleep(sleep_time)
-
-    print("Historical data retrieval is complete.")
-    client.run()
-    print("Client is running")
-    # client.disconnect()
+# def retrieve_historical_data_original(symbols):
+#     print("Start retrieving historical data...")
+#     duration = "50 Y"
+#     client = IBClient(duration)
+#     client.connect("127.0.0.1", 7497, clientId=0)
+#     print(client.isConnected())
+#
+#     end = datetime.now()
+#     # start = end - timedelta(days=365 * 30)
+#
+#     reqId = 2
+#     for symbol in symbols:
+#         contract = Contract()
+#         contract.symbol = symbol
+#         contract.secType = "STK"
+#         contract.exchange = "SMART"
+#         contract.currency = "USD"
+#         client.data[reqId] = {"symbol": symbol}
+#         print(contract.symbol)
+#         client.reqHistoricalData(reqId, contract, end.strftime("%Y%m%d %H:%M:%S"), duration, "1 day", "TRADES", 0, 1,
+#                                  False, [])
+#         print("Requeting historical data for " + symbol + " Finished")
+#
+#         reqId += 1
+#         # sleep for 1-3 second to avoid exceeding the API rate limit‘s 1 req/sec
+#         sleep_time = random.randint(1, 3)
+#         time.sleep(sleep_time)
+#
+#     print("Historical data retrieval is complete.")
+#     client.run()
+#     print("Client is running")
+#     # client.disconnect()
 
 
 
 
 if __name__ == "__main__":
     print('Start Main Program')
-
     ibkr = IBKRDataRetriever()
     main_equity_types = ibkr.get_main_equity_types()
-    product = main_equity_types.iloc[0]['product_name']
-    region = main_equity_types.iloc[0]['region']
-    all_exchanges = ibkr.get_exchanges_for_product_region(product, region)
-    country = all_exchanges.iloc[0]['country']
 
-    exchange = 'ArcaEdge'
+    product = main_equity_types.iloc[12]['product_name']
+    region = main_equity_types.iloc[12]['region']
+    print(f"{product} - {region}")
+    # print(stop)
+    all_exchanges = ibkr.get_exchanges_for_product_region(product, region)
+    country = all_exchanges.iloc[-1]['country']
+
+    # exchange = 'ArcaEdge'
+    # exchange = "Chicago Stock Exchange (CHX)"
+    exchange = 'Mexican Stock Exchange'
     root_path = ibkr.ibkr_constants.SYMBOL_DATA_ROOT_FOLDER
-    exchange_symbols = ibkr.get_exchange_symbols(product, region, country , exchange)
+    # exchange_symbols = ibkr.get_exchange_symbols(product, region, country , exchange)
+    exchange_symbols = pd.read_csv("ALL_ETF/Mexico/Stocks-North America (Mexico) [Mexican Stock Exchange (MEXI)] List of ETFs Symbols.csv")
 
     exchange_path = product + "/" + region + "/" + country + "/" + exchange
 
     mode = ["test", "train", "disconnect"]
-    # run 1: [550, 1000], run 2: [1000, 1500], run 3: [1500, 2000], run 4: [2000, 2500], run 5: [2500, 3000]
-    start = 1520
-    end = 2500
-    retrieve_historical_data(exchange_symbols.iloc[start:end], ibkr.ibkr_constants.ALL_PRODUCTS_NAMES[product], exchange, root_path,
-                             mode[1], exchange_path, country)
 
+    # run 1: [550, 1000], run 2: [1000, 1500], run 3: [1500, 2000], run 4: [2000, 2500], run 5: [2500, 3000]
+    start = 0
+    end = 10
+
+    print(len(exchange_symbols))
+    retrieve_historical_data(exchange_symbols.iloc[start:end], ibkr.ibkr_constants.ALL_PRODUCTS_NAMES[product], exchange, root_path,
+                             mode[2], exchange_path, country)
+
+    # data = {'ibkr_symbol': ['SSCC', 'SYYNY', 'TGRP', 'SODI'],
+    #         'product_description': ['Nothing','Nothing','Nothing','Nothing'],
+    #         'product_link': ['Nothing','Nothing','Nothing','Nothing'],
+    #         'conid': ['192','374','374','374'],
+    #         'symbol': ['SSCC', 'SYYNY','TGRP','SODI'],
+    #         'currency': ['USD', 'USD','USD','USD']}
+    #
+    # sample_df = pd.DataFrame(data=data,
+    #                   columns=['ibkr_symbol', 'product_description', 'product_link', 'conid', 'symbol', 'currency'])
+    #
+    #
+    # retrieve_historical_data(sample_df, ibkr.ibkr_constants.ALL_PRODUCTS_NAMES[product], exchange, root_path,
+    #                          mode[2], exchange_path, country)
 
 # Not Working Code:
 # class IbkrHistoricData(EWrapper, EClient):
